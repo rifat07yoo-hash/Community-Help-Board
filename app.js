@@ -11,6 +11,7 @@ const state = {
     ratingTargetUserId: null,
     filters: { search: '', category: '', priority: '', hideResolved: false, volunteerOnly: false },
     pollTimer: null,
+    admin: { posts: [], users: [], stats: {}, tab: 'posts' },
 };
 
 const priorityLabels = { urgent: '🔴 Urgent', high: '🟠 High', medium: '🟡 Medium' };
@@ -68,9 +69,35 @@ function generateAvatarHTML(photoUrl, name, sizeClass) {
 }
 
 // ---------------------------------------------------------------------
+// Dark mode
+// ---------------------------------------------------------------------
+function applyDarkModeIcons(isDark) {
+    const sun = document.getElementById('themeIconSun');
+    const moon = document.getElementById('themeIconMoon');
+    if (!sun || !moon) return;
+    sun.classList.toggle('hidden', isDark);
+    moon.classList.toggle('hidden', !isDark);
+}
+
+function initDarkMode() {
+    const saved = localStorage.getItem('chb_theme');
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = saved ? saved === 'dark' : prefersDark;
+    document.documentElement.classList.toggle('dark', isDark);
+    applyDarkModeIcons(isDark);
+}
+
+function toggleDarkMode() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('chb_theme', isDark ? 'dark' : 'light');
+    applyDarkModeIcons(isDark);
+}
+
+// ---------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', async () => {
+    initDarkMode();
     wireStaticHandlers();
     try {
         const { user } = await apiGet('auth_api/session.php');
@@ -85,26 +112,46 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+// Safely attach a listener — if the element isn't found, log a warning
+// instead of throwing, so a single missing node can never prevent the
+// rest of the app's event listeners (e.g. the password meter) from wiring up.
+function on(id, event, handler) {
+    const el = document.getElementById(id);
+    if (!el) { console.warn(`[wireStaticHandlers] #${id} not found — skipped ${event} listener`); return; }
+    el.addEventListener(event, handler);
+}
+
 function wireStaticHandlers() {
-    document.getElementById('loginForm').addEventListener('submit', onLogin);
-    document.getElementById('signupForm').addEventListener('submit', onSignup);
-    document.getElementById('helpForm').addEventListener('submit', onSubmitRequest);
-    document.getElementById('profileForm').addEventListener('submit', onUpdateProfile);
-    document.getElementById('messageForm').addEventListener('submit', onSendMessage);
-    document.getElementById('passwordForm').addEventListener('submit', onChangePassword);
+    on('loginForm', 'submit', onLogin);
+    on('signupForm', 'submit', onSignup);
+    on('helpForm', 'submit', onSubmitRequest);
+    on('profileForm', 'submit', onUpdateProfile);
+    on('messageForm', 'submit', onSendMessage);
+    on('passwordForm', 'submit', onChangePassword);
+    on('contributeForm', 'submit', onSubmitContribution);
 
-    document.getElementById('postImage').addEventListener('change', onPostImageChange);
-    document.getElementById('profileImageInput').addEventListener('change', onProfileImageChange);
+    on('postImage', 'change', onPostImageChange);
+    on('profileImageInput', 'change', onProfileImageChange);
 
-    document.getElementById('searchBox').addEventListener('input', debounce(e => {
+    on('regPass', 'input', e => updatePasswordStrength(e.target.value));
+    updatePasswordStrength(''); // initialize checklist/bar to a known empty state
+
+    on('editProfileBio', 'input', e => {
+        document.getElementById('bioCharCount').innerText = e.target.value.length;
+    });
+
+    on('searchBox', 'input', debounce(e => {
         state.filters.search = e.target.value;
         loadRequests();
         runGlobalSearch(e.target.value);
     }, 350));
-    document.getElementById('filterCategory').addEventListener('change', e => { state.filters.category = e.target.value; loadRequests(); });
-    document.getElementById('filterPriority').addEventListener('change', e => { state.filters.priority = e.target.value; loadRequests(); });
-    document.getElementById('hideResolved').addEventListener('change', e => { state.filters.hideResolved = e.target.checked; loadRequests(); });
-    document.getElementById('filterVolunteerOnly').addEventListener('change', e => { state.filters.volunteerOnly = e.target.checked; loadRequests(); });
+    on('filterCategory', 'change', e => { state.filters.category = e.target.value; loadRequests(); });
+    on('filterPriority', 'change', e => { state.filters.priority = e.target.value; loadRequests(); });
+    on('hideResolved', 'change', e => { state.filters.hideResolved = e.target.checked; loadRequests(); });
+    on('filterVolunteerOnly', 'change', e => { state.filters.volunteerOnly = e.target.checked; loadRequests(); });
+
+    on('adminSearchPosts', 'input', debounce(() => renderAdminLists(), 250));
+    on('adminSearchUsers', 'input', debounce(() => renderAdminLists(), 250));
 }
 
 function debounce(fn, ms) {
@@ -148,8 +195,104 @@ async function onLogin(e) {
     }
 }
 
+// ---------------------------------------------------------------------
+// Password strength meter (registration page)
+// ---------------------------------------------------------------------
+function passwordRuleChecks(pw) {
+    pw = pw || '';
+    return {
+        len: pw.length >= 6,
+        case: /[a-z]/.test(pw) && /[A-Z]/.test(pw),
+        num: /[0-9]/.test(pw),
+        special: /[^A-Za-z0-9]/.test(pw),
+    };
+}
+
+function passwordStrengthScore(pw) {
+    if (!pw) return 0;
+    const rules = passwordRuleChecks(pw);
+    let score = 0;
+    if (rules.len) score++;
+    if (pw.length >= 10) score++;
+    if (rules.case) score++;
+    if (rules.num) score++;
+    if (rules.special) score++;
+    return score; // 0-5
+}
+
+function updatePasswordChecklist(pw) {
+    const rules = passwordRuleChecks(pw);
+    Object.keys(rules).forEach(key => {
+        const item = document.querySelector(`#pwChecklist [data-rule="${key}"]`);
+        if (!item) return;
+        const icon = item.querySelector('.pw-check-icon');
+        const met = rules[key];
+        item.classList.toggle('pw-met', met);
+        item.classList.toggle('text-slate-400', !met);
+        if (icon) icon.innerText = met ? '✓' : '○';
+    });
+}
+
+function updatePasswordStrength(pw) {
+    const bar = document.getElementById('pwStrengthBar');
+    const label = document.getElementById('pwStrengthLabel');
+    if (!bar || !label) return;
+
+    updatePasswordChecklist(pw);
+    bar.classList.remove('pw-strength-weak', 'pw-strength-medium', 'pw-strength-strong');
+
+    if (!pw) {
+        bar.style.width = '0%';
+        label.innerText = 'Enter a password';
+        label.className = 'text-[10px] font-bold text-slate-400';
+        return;
+    }
+
+    if (pw.length < 6) {
+        bar.style.width = '15%';
+        bar.classList.add('pw-strength-weak');
+        label.innerText = 'Too short — minimum 6 characters';
+        label.className = 'text-[10px] font-bold text-red-600';
+        return;
+    }
+
+    const score = passwordStrengthScore(pw);
+    let widthPct, cssClass, text, textClass;
+    if (score <= 2) {
+        widthPct = 35; cssClass = 'pw-strength-weak'; text = 'Weak'; textClass = 'text-red-600';
+    } else if (score <= 3) {
+        widthPct = 65; cssClass = 'pw-strength-medium'; text = 'Medium'; textClass = 'text-amber-600';
+    } else {
+        widthPct = 100; cssClass = 'pw-strength-strong'; text = 'Strong'; textClass = 'text-emerald-600';
+    }
+    bar.style.width = widthPct + '%';
+    bar.classList.add(cssClass);
+    label.innerText = text;
+    label.className = 'text-[10px] font-bold ' + textClass;
+}
+
+function toggleRegPassVisibility() {
+    const input = document.getElementById('regPass');
+    const btn = document.getElementById('regPassToggle');
+    if (!input) return;
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    if (btn) btn.innerText = showing ? '👁️' : '🙈';
+}
+
 async function onSignup(e) {
     e.preventDefault();
+    const passInput = document.getElementById('regPass');
+    const password = passInput.value;
+
+    if (password.length < 6) {
+        showAuthMsg('Password must be at least 6 characters.', 'error');
+        passInput.classList.add('shake-invalid');
+        setTimeout(() => passInput.classList.remove('shake-invalid'), 400);
+        passInput.focus();
+        return;
+    }
+
     const payload = {
         name: document.getElementById('regName').value.trim(),
         phone: document.getElementById('regPhone').value.trim(),
@@ -157,7 +300,7 @@ async function onSignup(e) {
         location: document.getElementById('regLocation').value.trim(),
         blood_group: document.getElementById('regBlood').value,
         is_volunteer: document.getElementById('regVolunteer').checked,
-        password: document.getElementById('regPass').value,
+        password,
     };
     try {
         await apiJson('auth_api/register.php', 'POST', payload);
@@ -178,6 +321,14 @@ async function logout() {
 // ---------------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------------
+function playPageFade(el) {
+    if (!el) return;
+    el.classList.remove('page-fade');
+    // Force reflow so the animation restarts every time the page is shown
+    void el.offsetWidth;
+    el.classList.add('page-fade');
+}
+
 function navigateToPage(page) {
     document.getElementById('login-section').style.display = 'none';
     document.getElementById('dashboard-section').style.display = 'none';
@@ -185,15 +336,23 @@ function navigateToPage(page) {
     document.getElementById('admin-panel-section').style.display = 'none';
 
     if (page === 'login') {
-        document.getElementById('login-section').style.display = 'flex';
+        const el = document.getElementById('login-section');
+        el.style.display = 'flex';
+        playPageFade(el);
     } else if (page === 'dashboard') {
-        document.getElementById('dashboard-section').style.display = 'block';
+        const el = document.getElementById('dashboard-section');
+        el.style.display = 'block';
+        playPageFade(el);
     } else if (page === 'profile') {
         setupProfileFormValues();
-        document.getElementById('profile-page-section').style.display = 'block';
+        const el = document.getElementById('profile-page-section');
+        el.style.display = 'block';
+        playPageFade(el);
     } else if (page === 'admin') {
         if (!state.user || !state.user.is_admin) { alert('Access Denied!'); navigateToPage('dashboard'); return; }
-        document.getElementById('admin-panel-section').style.display = 'block';
+        const el = document.getElementById('admin-panel-section');
+        el.style.display = 'block';
+        playPageFade(el);
         loadAdminPanel();
     }
 }
@@ -216,13 +375,23 @@ function startDashboard() {
     loadDonors();
     loadNotifications();
     loadUnreadCount();
+}
 
-    if (state.pollTimer) clearInterval(state.pollTimer);
-    state.pollTimer = setInterval(() => {
+// Manual refresh — replaces the old 10s auto-polling. Called from the
+// "🔄 Refresh" button on the feed header.
+function refreshBoard(btn) {
+    if (btn) {
+        btn.disabled = true;
+        const original = btn.innerText;
+        Promise.all([loadRequests(), loadNotifications(), loadUnreadCount()]).finally(() => {
+            btn.disabled = false;
+            btn.innerText = original;
+        });
+    } else {
         loadRequests();
         loadNotifications();
         loadUnreadCount();
-    }, 10000);
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -251,8 +420,8 @@ function renderRequests() {
 
     let myCount = 0;
 
-    state.requests.forEach(r => {
-        const cardHTML = buildRequestCard(r);
+    state.requests.forEach((r, i) => {
+        const cardHTML = buildRequestCard(r, i);
         rList.insertAdjacentHTML('beforeend', cardHTML);
         if (r.user_id === state.user.id) {
             myCount++;
@@ -269,16 +438,17 @@ function renderRequests() {
     });
 }
 
-function buildRequestCard(r) {
+function buildRequestCard(r, index) {
     const target = parseInt(r.target_qty) || 1;
     const collected = parseInt(r.collected_qty) || 0;
     const percentage = Math.min(Math.round((collected / target) * 100), 100);
     const isOwner = r.user_id === state.user.id;
     const avatarHTML = generateAvatarHTML(r.user_avatar, r.user_name, 'w-10 h-10 text-xs');
     const when = new Date(r.created_at).toLocaleString();
+    const delay = Math.min((index || 0), 8) * 0.06;
 
     return `
-    <div class="glass-card p-5 rounded-3xl border-t-4 ${r.resolved ? 'border-emerald-500 opacity-80' : 'border-teal-500'} bg-white">
+    <div class="glass-card card-pop p-5 rounded-3xl border-t-4 ${r.resolved ? 'border-emerald-500 opacity-80' : 'border-teal-500'} bg-white" style="animation-delay:${delay}s">
         <div class="flex justify-between items-start gap-2 mb-3">
             <div>
                 <span class="px-2.5 py-1 text-[10px] rounded-lg font-bold uppercase border ${categoryColors[r.category]}">${r.category}</span>
@@ -288,7 +458,7 @@ function buildRequestCard(r) {
                 <div class="flex gap-1.5">
                     ${r.resolved ? '<span class="bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-bold text-[9px]">Resolved</span>' : ''}
                     ${r.message_count > 0 ? `<span class="bg-purple-100 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full font-bold text-[9px]">${r.message_count} Messages</span>` : ''}
-                    ${r.unread_count > 0 ? '<span class="bg-rose-600 text-white px-2 py-0.5 rounded-full font-bold text-[9px]">New</span>' : ''}
+                    ${r.unread_count > 0 ? '<span class="badge-pulse bg-rose-600 text-white px-2 py-0.5 rounded-full font-bold text-[9px]">New</span>' : ''}
                 </div>
             </div>
         </div>
@@ -308,15 +478,17 @@ function buildRequestCard(r) {
         ${r.image ? `<img src="${escapeHtml(r.image)}" class="w-full h-44 object-cover rounded-2xl my-2.5 border border-slate-200">` : ''}
         <p class="text-xs text-slate-600 my-3 leading-relaxed">${escapeHtml(r.description)}</p>
 
-        <div class="mb-4 bg-slate-100 rounded-full h-4.5 relative overflow-hidden">
-            <div class="bg-teal-600 h-full transition-all duration-500" style="width:${percentage}%"></div>
+        <div class="mb-2 bg-slate-100 rounded-full h-4.5 relative overflow-hidden">
+            <div class="bg-teal-600 h-full progress-fill transition-all duration-500" style="width:${percentage}%"></div>
             <span class="absolute inset-0 flex items-center justify-center text-[10px] font-extrabold text-slate-700">${collected} / ${target} (${percentage}%)</span>
         </div>
+        <button onclick="openHelpersModal(${r.id})" class="mb-4 text-[10px] font-bold text-teal-700 hover:underline">👥 ${r.helper_count || 0} জন সাহায্য করেছেন — বিস্তারিত দেখুন</button>
 
         <div class="bg-slate-50 p-2.5 rounded-xl text-teal-700 font-bold text-xs mb-4 border border-slate-200">📞 Coordinator: ${escapeHtml(r.contact)}</div>
 
         <div class="flex flex-wrap gap-2 mb-4">
             ${!isOwner || r.message_count > 0 ? `<button onclick="openMessageModal(${r.id})" class="btn-glow bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold">💬 Message Chat</button>` : ''}
+            ${!isOwner && !r.resolved ? `<button onclick="openHelpersModal(${r.id})" class="btn-glow bg-teal-100 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-200 px-3 py-1.5 rounded-xl text-xs font-bold">🤝 আমি সাহায্য করছি</button>` : ''}
             <button onclick="toggleMap(this, '${encodeURIComponent(r.location)}')" class="btn-glow bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-xl text-xs border border-slate-200 font-bold">🗺️ Map</button>
             <button onclick="navigateToLocation('${encodeURIComponent(r.location)}')" class="btn-glow bg-teal-600 hover:bg-teal-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold">🧭 Direct GPS</button>
             <button onclick="sharePost(${JSON.stringify(r.description)}, '${encodeURIComponent(r.location)}')" class="btn-glow bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-xs border border-slate-200 font-bold">🔗 Copy Share Info</button>
@@ -569,11 +741,12 @@ async function loadDonors() {
         const el = document.getElementById('donorList');
         el.innerHTML = '';
         if (!donors.length) { el.innerHTML = '<p class="text-xs text-slate-500">No donor registered yet.</p>'; return; }
-        donors.forEach(u => {
+        donors.forEach((u, i) => {
             const avatarHTML = generateAvatarHTML(u.profile_image, u.name, 'w-11 h-11 text-xs');
             const ratingStr = u.rating_count > 0 ? `⭐ ${u.rating_average}` : '⭐ No Rating';
+            const delay = Math.min(i, 8) * 0.06;
             el.insertAdjacentHTML('beforeend', `
-                <div class="glass-card min-w-[280px] p-4 rounded-2xl flex items-center gap-3.5 border-l-4 border-rose-500 bg-white shadow-sm">
+                <div class="glass-card card-pop min-w-[280px] p-4 rounded-2xl flex items-center gap-3.5 border-l-4 border-rose-500 bg-white shadow-sm" style="animation-delay:${delay}s">
                     <div class="cursor-pointer" onclick="viewPublicProfile(${u.id})">${avatarHTML}</div>
                     <div class="flex-1">
                         <h4 class="font-bold text-slate-800 text-sm cursor-pointer hover:underline hover:text-teal-600" onclick="viewPublicProfile(${u.id})">${escapeHtml(u.name)}</h4>
@@ -597,12 +770,23 @@ async function loadDonors() {
 // ---------------------------------------------------------------------
 async function viewPublicProfile(userId) {
     try {
-        const { profile, posts, rating_average, rating_count } = await apiGet('api/profile.php?id=' + userId);
+        const { profile, posts, rating_average, rating_count, total_help_count, activity } = await apiGet('api/profile.php?id=' + userId);
         document.getElementById('pubName').innerText = profile.name;
         document.getElementById('pubLocation').innerText = `📍 ${profile.location || 'N/A'}`;
         document.getElementById('pubBlood').innerText = `🩸 Group: ${profile.blood_group || 'N/A'}`;
         document.getElementById('pubRating').innerText = rating_count > 0 ? `⭐ ${rating_average} (${rating_count} reviews)` : '⭐ No Ratings Yet';
+        document.getElementById('pubHelpCount').innerText = `🤝 Helped ${total_help_count || 0}`;
         document.getElementById('pubAvatarContainer').innerHTML = generateAvatarHTML(profile.profile_image, profile.name, 'w-20 h-20 text-2xl');
+
+        const bioEl = document.getElementById('pubBio');
+        if (profile.bio) { bioEl.innerText = `"${profile.bio}"`; bioEl.classList.remove('hidden'); }
+        else { bioEl.classList.add('hidden'); bioEl.innerText = ''; }
+
+        const socialEl = document.getElementById('pubSocialLink');
+        if (profile.social_link) { socialEl.href = profile.social_link; socialEl.classList.remove('hidden'); }
+        else { socialEl.classList.add('hidden'); socialEl.removeAttribute('href'); }
+
+        document.getElementById('pubActivityList').innerHTML = renderActivityHTML(activity);
 
         const listContainer = document.getElementById('pubPostsList');
         listContainer.innerHTML = posts.length ? posts.map(p => `
@@ -675,6 +859,56 @@ async function deleteChatMessage(id, requestId) {
         await fetch('api/messages.php?id=' + id, { method: 'DELETE', credentials: 'same-origin' });
         openMessageModal(requestId);
     } catch (e) { alert('Error deleting message.'); }
+}
+
+// ---------------------------------------------------------------------
+// Helpers / contributions ("কে কতজন হেল্প করেছে")
+// ---------------------------------------------------------------------
+async function openHelpersModal(requestId) {
+    document.getElementById('contributeRequestId').value = requestId;
+    document.getElementById('contributeQty').value = '';
+    await renderHelpersList(requestId);
+    openModal('helpersModal');
+}
+
+async function renderHelpersList(requestId) {
+    const el = document.getElementById('helpersList');
+    el.innerHTML = '<p class="text-xs text-slate-400 italic">Loading…</p>';
+    try {
+        const { contributions } = await apiGet('api/contributions.php?request_id=' + requestId);
+        if (!contributions.length) {
+            el.innerHTML = '<p class="text-xs text-slate-500">এখনো কেউ সাহায্য করেননি। প্রথম হোন!</p>';
+            return;
+        }
+        el.innerHTML = contributions.map(c => {
+            const avatarHTML = generateAvatarHTML(c.user_avatar, c.user_name, 'w-9 h-9 text-[10px]');
+            const when = new Date(c.created_at).toLocaleString();
+            return `
+            <div class="glass-card p-3 rounded-2xl flex items-center gap-3 bg-white border border-slate-100">
+                <div class="cursor-pointer" onclick="viewPublicProfile(${c.user_id})">${avatarHTML}</div>
+                <div class="flex-1">
+                    <h5 class="font-bold text-slate-800 text-xs cursor-pointer hover:underline" onclick="viewPublicProfile(${c.user_id})">${escapeHtml(c.user_name)}</h5>
+                    <p class="text-[9px] text-slate-400">${when}</p>
+                </div>
+                <span class="bg-teal-100 text-teal-700 border border-teal-200 px-2 py-0.5 rounded-full font-bold text-[10px]">+${c.quantity}</span>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        el.innerHTML = '<p class="text-xs text-rose-500">তথ্য লোড করা যায়নি।</p>';
+    }
+}
+
+async function onSubmitContribution(e) {
+    e.preventDefault();
+    const requestId = parseInt(document.getElementById('contributeRequestId').value);
+    const quantity = parseInt(document.getElementById('contributeQty').value);
+    if (!requestId || !quantity || quantity < 1) return;
+    try {
+        await apiJson('api/contributions.php', 'POST', { request_id: requestId, quantity });
+        document.getElementById('contributeQty').value = '';
+        await renderHelpersList(requestId);
+        loadRequests();
+    } catch (err) { alert(err.message); }
 }
 
 async function openInbox() {
@@ -773,6 +1007,36 @@ async function submitRating() {
 }
 
 // ---------------------------------------------------------------------
+// Activity timeline rendering (shared between own profile + public modal)
+// ---------------------------------------------------------------------
+const activityIcons = {
+    register: '🎉',
+    post_create: '📢',
+    post_update: '✏️',
+    post_delete: '🗑️',
+    post_resolve: '✅',
+    comment: '💬',
+    message: '📨',
+    rating_given: '⭐',
+    profile_update: '📝',
+    password_change: '🔒',
+};
+
+function renderActivityHTML(activities) {
+    if (!activities || !activities.length) {
+        return '<p class="text-xs text-slate-400 italic">No activity recorded yet.</p>';
+    }
+    return activities.map((a, i) => `
+        <div class="activity-item flex items-start gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs" style="animation-delay:${Math.min(i, 10) * 0.04}s">
+            <span class="text-base leading-none mt-0.5">${activityIcons[a.action_type] || '🔹'}</span>
+            <div class="flex-1">
+                <p class="text-slate-700">${escapeHtml(a.description)}</p>
+                <span class="text-[9px] text-slate-400">${new Date(a.created_at).toLocaleString()}</span>
+            </div>
+        </div>`).join('');
+}
+
+// ---------------------------------------------------------------------
 // Profile page
 // ---------------------------------------------------------------------
 function setupProfileFormValues() {
@@ -780,6 +1044,9 @@ function setupProfileFormValues() {
     document.getElementById('editProfileLocation').value = state.user.location || '';
     document.getElementById('editProfilePhone').value = state.user.phone || '';
     document.getElementById('editProfileBlood').value = state.user.blood_group || 'Unknown';
+    document.getElementById('editProfileBio').value = state.user.bio || '';
+    document.getElementById('bioCharCount').innerText = (state.user.bio || '').length;
+    document.getElementById('editProfileSocialLink').value = state.user.social_link || '';
     document.getElementById('editAvatarContainer').innerHTML = generateAvatarHTML(state.user.profile_image, state.user.name, 'w-24 h-24 text-3xl');
 
     const badgeEl = document.getElementById('profileStatusBadge');
@@ -800,6 +1067,11 @@ function setupProfileFormValues() {
                 <p class="text-slate-600 italic">"${escapeHtml(r.review || 'Highly reliable community member.')}"</p>
             </div>`).join('') : '<p class="text-xs text-slate-400 italic">You don\'t have any reviews yet.</p>';
     }).catch(() => {});
+
+    apiGet('api/profile.php?id=' + state.user.id).then(({ total_help_count, activity }) => {
+        document.getElementById('profileHelpCount').innerText = total_help_count;
+        document.getElementById('myActivityLog').innerHTML = renderActivityHTML(activity);
+    }).catch(() => {});
 }
 
 let pendingProfileImage = null;
@@ -819,6 +1091,8 @@ async function onUpdateProfile(e) {
     fd.append('location', document.getElementById('editProfileLocation').value.trim());
     fd.append('phone', document.getElementById('editProfilePhone').value.trim());
     fd.append('blood_group', document.getElementById('editProfileBlood').value);
+    fd.append('bio', document.getElementById('editProfileBio').value.trim());
+    fd.append('social_link', document.getElementById('editProfileSocialLink').value.trim());
     if (pendingProfileImage) fd.append('profile_image', pendingProfileImage);
 
     try {
@@ -835,41 +1109,113 @@ async function onUpdateProfile(e) {
 // ---------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------
+const adminStatDefs = [
+    { key: 'total_users',    label: 'Total Members',  icon: '👥', color: 'text-teal-600' },
+    { key: 'volunteers',     label: 'Volunteers',     icon: '🌟', color: 'text-amber-600' },
+    { key: 'banned_users',   label: 'Banned',         icon: '🚫', color: 'text-rose-600' },
+    { key: 'total_posts',    label: 'Total Posts',    icon: '📋', color: 'text-indigo-600' },
+    { key: 'flagged_posts',  label: 'Flagged Posts',  icon: '🚨', color: 'text-red-600' },
+    { key: 'resolved_posts', label: 'Resolved',       icon: '✅', color: 'text-emerald-600' },
+];
+
+function animateCountUp(el, target) {
+    target = parseInt(target) || 0;
+    const duration = 500;
+    const start = performance.now();
+    function frame(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        el.innerText = Math.round(eased * target);
+        if (progress < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+}
+
+function renderAdminStats(stats) {
+    const grid = document.getElementById('adminStatsGrid');
+    grid.innerHTML = adminStatDefs.map((def, i) => `
+        <div class="admin-stat-card bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-center" style="animation-delay:${i * 0.06}s">
+            <div class="text-xl mb-1">${def.icon}</div>
+            <div class="text-lg font-black ${def.color}" data-stat-count="${def.key}">0</div>
+            <div class="text-[9px] font-bold text-slate-500 uppercase mt-0.5">${def.label}</div>
+        </div>`).join('');
+
+    adminStatDefs.forEach(def => {
+        const el = grid.querySelector(`[data-stat-count="${def.key}"]`);
+        if (el) animateCountUp(el, stats[def.key] || 0);
+    });
+}
+
+function switchAdminTab(tab) {
+    state.admin.tab = tab;
+    document.getElementById('adminTabBtnPosts').classList.toggle('active', tab === 'posts');
+    document.getElementById('adminTabBtnUsers').classList.toggle('active', tab === 'users');
+    document.getElementById('adminTabBtnPosts').classList.toggle('text-slate-500', tab !== 'posts');
+    document.getElementById('adminTabBtnUsers').classList.toggle('text-slate-500', tab !== 'users');
+
+    const postsPanel = document.getElementById('adminTabPosts');
+    const usersPanel = document.getElementById('adminTabUsers');
+    postsPanel.classList.toggle('hidden', tab !== 'posts');
+    usersPanel.classList.toggle('hidden', tab !== 'users');
+    // restart entrance animation on the panel that just became visible
+    const visible = tab === 'posts' ? postsPanel : usersPanel;
+    visible.classList.remove('admin-tab-panel');
+    void visible.offsetWidth;
+    visible.classList.add('admin-tab-panel');
+}
+
 async function loadAdminPanel() {
     try {
-        const { posts, users } = await apiGet('api/admin.php');
-        document.getElementById('adminTotalPosts').innerText = posts.length;
-        document.getElementById('adminPostsList').innerHTML = posts.map(p => `
-            <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row justify-between gap-3 text-xs">
-                <div class="truncate max-w-[70%]">
-                    <p class="font-bold text-slate-800 flex items-center gap-1.5">${escapeHtml(p.user_name)} <span class="bg-rose-100 text-rose-700 px-2 py-0.5 rounded text-[9px] font-black uppercase">Reports: ${p.report_count}</span></p>
-                    <p class="text-[10px] text-slate-500 mt-1 truncate">${escapeHtml(p.description)}</p>
-                </div>
-                <div class="flex gap-2 self-center">
-                    <button onclick="adminDeletePost(${p.id})" class="btn-glow bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl font-bold">Delete Post</button>
-                    ${p.report_count > 0 ? `<button onclick="dismissReports(${p.id})" class="btn-glow bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-xl font-bold">Clear Flags</button>` : ''}
-                </div>
-            </div>`).join('');
-
-        document.getElementById('adminTotalUsers').innerText = users.length;
-        document.getElementById('adminUsersList').innerHTML = users.map(u => `
-            <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row justify-between gap-3 text-xs">
-                <div>
-                    <p class="font-bold text-slate-800 flex items-center gap-1.5">${escapeHtml(u.name)}
-                        ${u.is_admin ? '<span class="text-[9px] bg-teal-100 text-teal-700 border border-teal-300 px-1.5 py-0.5 rounded font-bold">Admin</span>' : ''}
-                        ${u.is_volunteer ? '<span class="text-[9px] bg-amber-100 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded font-bold">Volunteer</span>' : ''}
-                        ${u.is_banned ? '<span class="text-[9px] bg-rose-100 text-rose-700 border border-rose-300 px-1.5 py-0.5 rounded font-bold uppercase">Banned</span>' : ''}
-                    </p>
-                    <p class="text-[10px] text-slate-500 mt-1">✉️ ${escapeHtml(u.email)} | 📞 ${escapeHtml(u.phone || 'N/A')}</p>
-                </div>
-                <div class="flex gap-2 self-center">
-                    ${!u.is_admin ? `
-                        <button onclick="toggleBanUser(${u.id}, ${u.is_banned ? 1 : 0})" class="btn-glow ${u.is_banned ? 'bg-teal-600 text-white' : 'bg-rose-100 text-rose-700 hover:bg-rose-600 hover:text-white border border-rose-200'} px-2.5 py-1.5 rounded-xl font-bold">${u.is_banned ? 'Unban User' : 'Ban User'}</button>
-                        <button onclick="adminDeleteUser(${u.id})" class="btn-glow bg-rose-600 hover:bg-rose-500 text-white px-2.5 py-1.5 rounded-xl font-bold">Delete</button>
-                    ` : ''}
-                </div>
-            </div>`).join('');
+        const { posts, users, stats } = await apiGet('api/admin.php');
+        state.admin.posts = posts;
+        state.admin.users = users;
+        state.admin.stats = stats || {};
+        renderAdminStats(state.admin.stats);
+        renderAdminLists();
     } catch (e) { alert(e.message); }
+}
+
+function renderAdminLists() {
+    const postSearch = (document.getElementById('adminSearchPosts')?.value || '').toLowerCase();
+    const userSearch = (document.getElementById('adminSearchUsers')?.value || '').toLowerCase();
+
+    const posts = state.admin.posts.filter(p =>
+        !postSearch || p.user_name.toLowerCase().includes(postSearch) || p.description.toLowerCase().includes(postSearch));
+    const users = state.admin.users.filter(u =>
+        !userSearch || u.name.toLowerCase().includes(userSearch) || u.email.toLowerCase().includes(userSearch));
+
+    document.getElementById('adminTotalPosts').innerText = posts.length;
+    document.getElementById('adminPostsList').innerHTML = posts.length ? posts.map((p, i) => `
+        <div class="card-pop p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row justify-between gap-3 text-xs" style="animation-delay:${Math.min(i,8)*0.05}s">
+            <div class="truncate max-w-[70%]">
+                <p class="font-bold text-slate-800 flex items-center gap-1.5">${escapeHtml(p.user_name)} <span class="bg-rose-100 text-rose-700 px-2 py-0.5 rounded text-[9px] font-black uppercase">Reports: ${p.report_count}</span></p>
+                <p class="text-[10px] text-slate-500 mt-1 truncate">${escapeHtml(p.description)}</p>
+            </div>
+            <div class="flex gap-2 self-center">
+                <button onclick="adminDeletePost(${p.id})" class="btn-glow bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-xl font-bold">Delete Post</button>
+                ${p.report_count > 0 ? `<button onclick="dismissReports(${p.id})" class="btn-glow bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-xl font-bold">Clear Flags</button>` : ''}
+            </div>
+        </div>`).join('') : `<p class="text-xs text-slate-400 text-center py-6">No matching posts found.</p>`;
+
+    document.getElementById('adminTotalUsers').innerText = users.length;
+    document.getElementById('adminUsersList').innerHTML = users.length ? users.map((u, i) => `
+        <div class="card-pop p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row justify-between gap-3 text-xs" style="animation-delay:${Math.min(i,8)*0.05}s">
+            <div>
+                <p class="font-bold text-slate-800 flex items-center gap-1.5">${escapeHtml(u.name)}
+                    ${u.is_admin ? '<span class="text-[9px] bg-teal-100 text-teal-700 border border-teal-300 px-1.5 py-0.5 rounded font-bold">Admin</span>' : ''}
+                    ${u.is_volunteer ? '<span class="text-[9px] bg-amber-100 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded font-bold">Volunteer</span>' : ''}
+                    ${u.is_banned ? '<span class="text-[9px] bg-rose-100 text-rose-700 border border-rose-300 px-1.5 py-0.5 rounded font-bold uppercase">Banned</span>' : ''}
+                </p>
+                <p class="text-[10px] text-slate-500 mt-1">✉️ ${escapeHtml(u.email)} | 📞 ${escapeHtml(u.phone || 'N/A')}</p>
+            </div>
+            <div class="flex gap-2 self-center flex-wrap justify-end">
+                ${!u.is_admin ? `
+                    <button onclick="toggleVolunteer(${u.id})" class="btn-glow ${u.is_volunteer ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 hover:bg-amber-500 hover:text-white border border-amber-200'} px-2.5 py-1.5 rounded-xl font-bold">${u.is_volunteer ? 'Unmark 🌟' : 'Mark 🌟'}</button>
+                    <button onclick="toggleBanUser(${u.id}, ${u.is_banned ? 1 : 0})" class="btn-glow ${u.is_banned ? 'bg-teal-600 text-white' : 'bg-rose-100 text-rose-700 hover:bg-rose-600 hover:text-white border border-rose-200'} px-2.5 py-1.5 rounded-xl font-bold">${u.is_banned ? 'Unban User' : 'Ban User'}</button>
+                    <button onclick="adminDeleteUser(${u.id})" class="btn-glow bg-rose-600 hover:bg-rose-500 text-white px-2.5 py-1.5 rounded-xl font-bold">Delete</button>
+                ` : ''}
+            </div>
+        </div>`).join('') : `<p class="text-xs text-slate-400 text-center py-6">No matching members found.</p>`;
 }
 
 async function adminDeletePost(id) {
@@ -889,6 +1235,13 @@ async function toggleBanUser(userId, currentBanned) {
     if (!confirm(`🚨 Are you sure you want to ${actionText} this user?`)) return;
     try {
         await apiJson('api/admin.php', 'POST', { action: currentBanned ? 'unban_user' : 'ban_user', user_id: userId });
+        loadAdminPanel();
+    } catch (err) { alert(err.message); }
+}
+
+async function toggleVolunteer(userId) {
+    try {
+        await apiJson('api/admin.php', 'POST', { action: 'toggle_volunteer', user_id: userId });
         loadAdminPanel();
     } catch (err) { alert(err.message); }
 }
