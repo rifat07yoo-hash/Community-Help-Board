@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/response.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity.php';
 
 $pdo = getDB();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -35,14 +36,18 @@ if ($method === 'POST') {
     if ($score < 1 || $score > 5) jsonError('Score must be between 1 and 5.');
     if ($targetUserId === (int)$user['id']) jsonError('You cannot rate yourself.');
 
-    $stmt = $pdo->prepare('SELECT id FROM users WHERE id = ?');
+    $stmt = $pdo->prepare('SELECT id, name FROM users WHERE id = ?');
     $stmt->execute([$targetUserId]);
-    if (!$stmt->fetch()) jsonError('Target user not found.', 404);
+    $targetUser = $stmt->fetch();
+    if (!$targetUser) jsonError('Target user not found.', 404);
 
     $stmt = $pdo->prepare("INSERT INTO ratings (target_user_id, rated_by_user_id, score, review)
         VALUES (?,?,?,?)
         ON DUPLICATE KEY UPDATE score = VALUES(score), review = VALUES(review), created_at = CURRENT_TIMESTAMP");
     $stmt->execute([$targetUserId, $user['id'], $score, $review]);
+
+    $stars = str_repeat('⭐', $score);
+    logActivity($user['id'], 'rating_given', "Rated {$targetUser['name']} {$stars}");
 
     jsonResponse(['success' => true]);
 }

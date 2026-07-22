@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/response.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/upload.php';
+require_once __DIR__ . '/../includes/activity.php';
 
 $pdo = getDB();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -19,6 +20,11 @@ function attachExtras($pdo, &$row, $currentUserId) {
     $stmt = $pdo->prepare('SELECT COUNT(*) FROM comments WHERE request_id = ?');
     $stmt->execute([$row['id']]);
     $row['comment_count'] = (int)$stmt->fetchColumn();
+
+    // helper count — distinct people who logged a contribution ("কে কতজন হেল্প করেছে")
+    $stmt = $pdo->prepare('SELECT COUNT(DISTINCT user_id) FROM contributions WHERE request_id = ?');
+    $stmt->execute([$row['id']]);
+    $row['helper_count'] = (int)$stmt->fetchColumn();
 
     // report count (only meaningful info, not who reported)
     $stmt = $pdo->prepare('SELECT COUNT(*) FROM reports WHERE request_id = ?');
@@ -144,6 +150,7 @@ if ($method === 'POST') {
 
         $newId = $pdo->lastInsertId();
         addNotification("New {$priority} emergency request posted in {$location}!");
+        logActivity($user['id'], 'post_create', "Posted a new {$category} help request in {$location} 📢", (int)$newId);
 
         jsonResponse(['success' => true, 'id' => (int)$newId], 201);
     }
@@ -177,6 +184,7 @@ if ($method === 'POST') {
         $stmt->execute([$category, $priority, $location, $contact, $description, $targetQty, $collectedQty, $imagePath, $id]);
 
         addNotification("Update issued for the request in {$location}.");
+        logActivity($user['id'], 'post_update', "Updated a help request in {$location} ✏️", $id);
 
         jsonResponse(['success' => true]);
     }
@@ -185,13 +193,17 @@ if ($method === 'POST') {
         $id = (int)($_POST['id'] ?? 0);
         if (!$id) jsonError('Missing request id.');
 
-        $stmt = $pdo->prepare('SELECT user_id, image FROM help_requests WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT user_id, image, location FROM help_requests WHERE id = ?');
         $stmt->execute([$id]);
         $existing = $stmt->fetch();
         if (!$existing) jsonError('Request not found.', 404);
         if ((int)$existing['user_id'] !== (int)$user['id'] && !$user['is_admin']) {
             jsonError('You can only delete your own posts.', 403);
         }
+
+        // Log before the delete so the FK (ON DELETE SET NULL) still lets
+        // this entry exist afterwards, just without a live request link.
+        logActivity($existing['user_id'], 'post_delete', "Deleted a help request in {$existing['location']} 🗑️");
 
         $stmt = $pdo->prepare('DELETE FROM help_requests WHERE id = ?');
         $stmt->execute([$id]);
@@ -221,6 +233,12 @@ if ($method === 'POST') {
         $stmt->execute([$newState, $id]);
 
         addNotification("Case status in {$existing['location']} marked as " . ($newState ? 'resolved' : 'reopened') . " by {$user['name']}.");
+        logActivity(
+            $user['id'],
+            'post_resolve',
+            ($newState ? "Marked a help request in {$existing['location']} as resolved ✅" : "Reopened a help request in {$existing['location']} 🔁"),
+            $id
+        );
 
         jsonResponse(['success' => true, 'resolved' => (bool)$newState]);
     }

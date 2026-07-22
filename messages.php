@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/response.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity.php';
 
 $pdo = getDB();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -73,7 +74,7 @@ if ($method === 'POST') {
 
     if (!$requestId || $text === '') jsonError('request_id and text are required.');
 
-    $stmt = $pdo->prepare('SELECT user_id FROM help_requests WHERE id = ?');
+    $stmt = $pdo->prepare('SELECT user_id, location FROM help_requests WHERE id = ?');
     $stmt->execute([$requestId]);
     $request = $stmt->fetch();
     if (!$request) jsonError('Request not found.', 404);
@@ -95,6 +96,8 @@ if ($method === 'POST') {
 
     $stmt = $pdo->prepare('INSERT INTO messages (request_id, sender_id, recipient_id, text) VALUES (?,?,?,?)');
     $stmt->execute([$requestId, $user['id'], $recipientId, $text]);
+
+    logActivity($user['id'], 'message', "Sent a coordination message about a request in {$request['location']} 📨", $requestId);
 
     jsonResponse(['success' => true, 'id' => (int)$pdo->lastInsertId()], 201);
 }

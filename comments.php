@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/response.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity.php';
 
 $pdo = getDB();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -25,12 +26,15 @@ if ($method === 'POST') {
 
     if (!$requestId || $text === '') jsonError('request_id and text are required.');
 
-    $stmt = $pdo->prepare('SELECT id FROM help_requests WHERE id = ?');
+    $stmt = $pdo->prepare('SELECT id, location FROM help_requests WHERE id = ?');
     $stmt->execute([$requestId]);
-    if (!$stmt->fetch()) jsonError('Request not found.', 404);
+    $reqRow = $stmt->fetch();
+    if (!$reqRow) jsonError('Request not found.', 404);
 
     $stmt = $pdo->prepare('INSERT INTO comments (request_id, user_id, text) VALUES (?,?,?)');
     $stmt->execute([$requestId, $user['id'], $text]);
+
+    logActivity($user['id'], 'comment', "Commented on a help request in {$reqRow['location']} 💬", $requestId);
 
     jsonResponse(['success' => true, 'id' => (int)$pdo->lastInsertId()], 201);
 }

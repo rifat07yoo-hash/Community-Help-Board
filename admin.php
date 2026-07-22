@@ -19,7 +19,16 @@ if ($method === 'GET') {
     $stmt = $pdo->query("SELECT id, name, email, phone, is_admin, is_volunteer, is_banned FROM users ORDER BY name ASC");
     $users = $stmt->fetchAll();
 
-    jsonResponse(['posts' => $posts, 'users' => $users]);
+    $stats = [
+        'total_users'      => count($users),
+        'banned_users'     => count(array_filter($users, fn($u) => (int)$u['is_banned'] === 1)),
+        'volunteers'       => count(array_filter($users, fn($u) => (int)$u['is_volunteer'] === 1)),
+        'total_posts'      => count($posts),
+        'flagged_posts'    => count(array_filter($posts, fn($p) => (int)$p['report_count'] > 0)),
+        'resolved_posts'   => (int)$pdo->query('SELECT COUNT(*) FROM help_requests WHERE resolved = 1')->fetchColumn(),
+    ];
+
+    jsonResponse(['posts' => $posts, 'users' => $users, 'stats' => $stats]);
 }
 
 if ($method === 'POST') {
@@ -38,6 +47,22 @@ if ($method === 'POST') {
 
         $newState = $action === 'ban_user' ? 1 : 0;
         $stmt = $pdo->prepare('UPDATE users SET is_banned = ? WHERE id = ?');
+        $stmt->execute([$newState, $userId]);
+
+        jsonResponse(['success' => true]);
+    }
+
+    if ($action === 'toggle_volunteer') {
+        $userId = (int)($data['user_id'] ?? 0);
+        if (!$userId) jsonError('Missing user_id.');
+
+        $stmt = $pdo->prepare('SELECT is_volunteer FROM users WHERE id = ?');
+        $stmt->execute([$userId]);
+        $target = $stmt->fetch();
+        if (!$target) jsonError('User not found.', 404);
+
+        $newState = $target['is_volunteer'] ? 0 : 1;
+        $stmt = $pdo->prepare('UPDATE users SET is_volunteer = ? WHERE id = ?');
         $stmt->execute([$newState, $userId]);
 
         jsonResponse(['success' => true]);

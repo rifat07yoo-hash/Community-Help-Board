@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/response.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/activity.php';
 
 $user = requireAuth();
 
@@ -36,5 +37,7 @@ if (!$row || !password_verify($currentPassword, $row['password'])) {
 $newHash = password_hash($newPassword, PASSWORD_BCRYPT);
 $stmt = $pdo->prepare('UPDATE users SET password = ? WHERE id = ?');
 $stmt->execute([$newHash, $user['id']]);
+
+logActivity($user['id'], 'password_change', 'Changed account password 🔒');
 
 jsonResponse(['success' => true, 'message' => 'Password updated successfully.']);
