@@ -51,11 +51,35 @@ per the CSE 2208 DBMS Lab requirement (CRUD operations implemented with MySQL).
    php create_admin.php your-email@example.com
    ```
 
+### Upgrading an existing database
+
+If you already ran `schema.sql` before this update, run these two
+statements once instead of recreating the database (they're additive and
+won't touch existing data):
+
+```sql
+ALTER TABLE users
+    ADD COLUMN bio VARCHAR(500) DEFAULT NULL AFTER profile_image,
+    ADD COLUMN social_link VARCHAR(255) DEFAULT NULL AFTER bio;
+
+CREATE TABLE activity_log (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    user_id         INT NOT NULL,
+    action_type     VARCHAR(30)  NOT NULL,
+    description     VARCHAR(255) NOT NULL,
+    request_id      INT DEFAULT NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (request_id) REFERENCES help_requests(id) ON DELETE SET NULL,
+    INDEX idx_user_created (user_id, created_at)
+) ENGINE=InnoDB;
+```
+
 ## 3. Project structure
 
 ```
 community-help-board/
-├── schema.sql              -- MySQL schema (7 tables, FKs, cascading deletes)
+├── schema.sql              -- MySQL schema (8 tables, FKs, cascading deletes)
 ├── config.php               -- DB credentials
 ├── create_admin.php         -- CLI: promote a user to admin
 ├── index.php                 -- Frontend shell (login/dashboard/profile/admin)
@@ -63,7 +87,8 @@ community-help-board/
 │   ├── db.php                -- PDO connection
 │   ├── response.php          -- JSON response helpers
 │   ├── auth.php               -- session/auth guards
-│   └── upload.php             -- image upload validation & storage
+│   ├── upload.php             -- image upload validation & storage
+│   └── activity.php           -- ★ activity-timeline logging helper
 ├── auth_api/
 │   ├── register.php, login.php, logout.php, session.php
 ├── api/
@@ -74,7 +99,7 @@ community-help-board/
 │   ├── ratings.php    -- star ratings/reviews between users
 │   ├── reports.php    -- flag/report a post
 │   ├── admin.php      -- ban/unban/delete users, delete posts, clear flags
-│   ├── profile.php    -- update own profile / view public profile
+│   ├── profile.php    -- update own profile / view public profile (bio, social link, help count, activity)
 │   ├── donors.php     -- registered blood donor directory
 │   ├── stats.php          -- ★ platform statistics (COUNT/GROUP BY/AVG)
 │   ├── leaderboard.php    -- ★ top-rated & most-active helpers (JOIN/GROUP BY/HAVING)
@@ -88,10 +113,12 @@ community-help-board/
 ## 4. Database design (maps to the "Project Features & Functionality" +
    "GitHub Commit History" evaluation criteria)
 
-7 normalized tables with foreign keys and `ON DELETE CASCADE`:
-`users`, `help_requests`, `comments`, `messages`, `notifications`,
-`ratings` (unique per rater→target pair), `reports` (unique per
-reporter→post pair, auto-hides a post at 3+ reports).
+8 normalized tables with foreign keys and `ON DELETE CASCADE` (or
+`ON DELETE SET NULL` where the row should survive its parent's deletion):
+`users` (now includes `bio` and `social_link`), `help_requests`, `comments`,
+`messages`, `notifications`, `ratings` (unique per rater→target pair),
+`reports` (unique per reporter→post pair, auto-hides a post at 3+ reports),
+and `activity_log` (per-user action timeline).
 
 ## 5. Security notes
 - Every query uses PDO **prepared statements** — no string-concatenated SQL.
@@ -115,7 +142,33 @@ reporter→post pair, auto-hides a post at 3+ reports).
 - **⬇️ Export CSV** — button on "My Personal Posts" downloads all of your own
   requests as a CSV via `api/export.php`.
 
-## 7. What changed vs. the original
+## 7. Latest profile & security additions
+
+- **📝 Bio** — a short (≤500 char) public bio field on every profile, editable
+  from the Settings page, shown on both your own profile and the public
+  profile modal.
+- **🔗 Social / Portfolio Link** — one link (Facebook, LinkedIn, personal site,
+  etc.). The backend auto-prefixes `https://` if omitted and validates it's a
+  real URL before saving (`api/profile.php`).
+- **🤝 Total Help Count** — a live-computed stat (not a stored counter, so it
+  can never drift) showing how many *other people's* requests you've actively
+  assisted with, based on distinct requests where you sent a message or left
+  a comment as a non-owner.
+- **🕐 Activity Timeline** — a new `activity_log` table + `includes/activity.php`
+  helper records every meaningful action (registering, posting/editing/
+  deleting/resolving a request, commenting, messaging, rating someone,
+  updating your profile, changing your password) and renders it as a
+  scrollable, animated timeline on both your own Settings page and the public
+  profile modal.
+- **🔑 Password strength meter** — the registration page now shows a live
+  Weak / Medium / Strong meter as you type, with a hard client- and
+  server-side minimum of 6 characters (weak/too-short attempts are rejected
+  with a shake animation before any request is sent).
+- **✨ Extra animations** — new stat-card pop-in, activity-item slide-in, and
+  strength-bar transition animations layered on top of the existing
+  fade/entrance system.
+
+## 8. What changed vs. the original
 The original used Firebase Auth + Firestore (a NoSQL, client-side database),
 which doesn't satisfy a "CRUD with MySQL" requirement and has no real schema.
 This version keeps the same UI/UX and feature set (post requests, comments,

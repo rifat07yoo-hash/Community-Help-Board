@@ -23,6 +23,8 @@ CREATE TABLE users (
     is_admin        TINYINT(1)    NOT NULL DEFAULT 0,
     is_banned       TINYINT(1)    NOT NULL DEFAULT 0,
     profile_image   VARCHAR(255)  DEFAULT NULL,
+    bio             VARCHAR(500)  DEFAULT NULL,
+    social_link     VARCHAR(255)  DEFAULT NULL,
     created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -117,6 +119,36 @@ CREATE TABLE reports (
     FOREIGN KEY (request_id) REFERENCES help_requests(id) ON DELETE CASCADE,
     FOREIGN KEY (reported_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE KEY uniq_report (request_id, reported_by_user_id)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- CONTRIBUTIONS (records who helped a request and how much, so posts can
+-- show "X people helped" instead of just an aggregate collected_qty)
+-- ---------------------------------------------------------------------
+CREATE TABLE contributions (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    request_id      INT NOT NULL,
+    user_id         INT NOT NULL,
+    quantity        INT NOT NULL DEFAULT 1,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (request_id) REFERENCES help_requests(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_request (request_id)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- ACTIVITY LOG (per-user timeline of actions, shown on the profile page)
+-- ---------------------------------------------------------------------
+CREATE TABLE activity_log (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    user_id         INT NOT NULL,
+    action_type     VARCHAR(30)  NOT NULL,
+    description     VARCHAR(255) NOT NULL,
+    request_id      INT DEFAULT NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (request_id) REFERENCES help_requests(id) ON DELETE SET NULL,
+    INDEX idx_user_created (user_id, created_at)
 ) ENGINE=InnoDB;
 
 -- NOTE: No admin account is seeded here because a correct bcrypt hash
