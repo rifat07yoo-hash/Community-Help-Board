@@ -75,7 +75,12 @@ community-help-board/
 │   ├── reports.php    -- flag/report a post
 │   ├── admin.php      -- ban/unban/delete users, delete posts, clear flags
 │   ├── profile.php    -- update own profile / view public profile
-│   └── donors.php     -- registered blood donor directory
+│   ├── donors.php     -- registered blood donor directory
+│   ├── stats.php          -- ★ platform statistics (COUNT/GROUP BY/AVG)
+│   ├── leaderboard.php    -- ★ top-rated & most-active helpers (JOIN/GROUP BY/HAVING)
+│   ├── change_password.php-- ★ dedicated password-change endpoint
+│   ├── export.php         -- ★ CSV export of the current user's own requests
+│   └── search.php         -- ★ global search across users + requests
 ├── uploads/            -- uploaded images (post photos, avatars)
 └── assets/app.js       -- all frontend logic (fetch calls, rendering)
 ```
@@ -97,7 +102,20 @@ reporter→post pair, auto-hides a post at 3+ reports).
   to random names, and the `uploads/` folder blocks PHP execution via
   `.htaccess`.
 
-## 6. What changed vs. the original
+## 6. Newer additions
+
+- **📊 Insights modal** (header button) — calls `api/stats.php` (aggregate counts,
+  category/priority breakdown, average fulfillment %, 7-day trend, top locations)
+  and `api/leaderboard.php` (top-rated helpers via `AVG`/`GROUP BY`/`HAVING`, and
+  most-active helpers by resolved-request count).
+- **🔎 Live global search** — typing in the main search box now also queries
+  `api/search.php`, showing matching people and posts in a strip above the feed.
+- **🔒 Change Password** — a dedicated form on the profile page, backed by
+  `api/change_password.php` (re-verifies the current password before updating).
+- **⬇️ Export CSV** — button on "My Personal Posts" downloads all of your own
+  requests as a CSV via `api/export.php`.
+
+## 7. What changed vs. the original
 The original used Firebase Auth + Firestore (a NoSQL, client-side database),
 which doesn't satisfy a "CRUD with MySQL" requirement and has no real schema.
 This version keeps the same UI/UX and feature set (post requests, comments,

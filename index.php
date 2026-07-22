@@ -116,6 +116,7 @@
             <button id="goToAdminBtn" onclick="navigateToPage('admin')" class="hidden bg-rose-100 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 px-4 py-2 rounded-xl font-bold text-xs">🛡️ Admin Dashboard</button>
             <button onclick="navigateToPage('profile')" class="btn-glow bg-teal-500/10 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-300 px-4 py-2 rounded-xl font-bold text-xs">👤 Settings & Profile</button>
             <button onclick="openInbox()" class="btn-glow bg-purple-500/10 hover:bg-purple-600 text-purple-700 hover:text-white border border-purple-300 px-4 py-2 rounded-xl font-bold text-xs relative">💬 Direct Chat <span id="unreadBadge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] w-5 h-5 rounded-full flex items-center justify-center font-bold"></span></button>
+            <button onclick="openInsights()" class="btn-glow bg-indigo-500/10 hover:bg-indigo-600 text-indigo-700 hover:text-white border border-indigo-300 px-4 py-2 rounded-xl font-bold text-xs">📊 Insights</button>
             <button onclick="openNotifications()" class="btn-glow bg-blue-500/10 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-300 px-4 py-2 rounded-xl font-bold text-xs relative">🔔 Alerts <span id="notifBadge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] w-5 h-5 rounded-full flex items-center justify-center font-bold"></span></button>
             <button onclick="logout()" class="btn-glow bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-xl font-bold text-xs">🚪 Sign Out</button>
         </div>
@@ -141,6 +142,8 @@
             </div>
         </div>
     </div>
+
+    <div id="searchMatches" class="hidden glass-card rounded-3xl p-4"></div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-1">
@@ -202,7 +205,9 @@
                 <div id="donorList" class="flex gap-4 overflow-x-auto pb-3"></div>
             </div>
             <div>
-                <h3 class="text-lg font-bold text-slate-800 mb-4">📝 My Personal Posts <span id="totalPosts" class="bg-teal-500/10 text-teal-700 text-xs px-2.5 py-0.5 border border-teal-300 rounded-full">0</span></h3>
+                <h3 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 flex-wrap">📝 My Personal Posts <span id="totalPosts" class="bg-teal-500/10 text-teal-700 text-xs px-2.5 py-0.5 border border-teal-300 rounded-full">0</span>
+                    <button onclick="window.location.href='api/export.php'" class="btn-glow bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 px-3 py-1 rounded-xl text-[11px] font-bold ml-auto">⬇️ Export CSV</button>
+                </h3>
                 <div id="myRequestsList" class="flex flex-col gap-4"></div>
             </div>
         </div>
@@ -246,6 +251,18 @@
                 <div id="myReviewsFeed" class="space-y-2.5 max-h-52 overflow-y-auto pr-1"></div>
             </div>
         </form>
+
+        <div class="border-t border-slate-200 p-6">
+            <h4 class="text-xs font-bold text-rose-600 uppercase mb-3">🔒 Change Password</h4>
+            <form id="passwordForm" class="space-y-3">
+                <input type="password" id="currentPassword" placeholder="Current password" class="glass-input w-full p-3 rounded-xl text-sm" required>
+                <div class="grid grid-cols-2 gap-3">
+                    <input type="password" id="newPassword" placeholder="New password" class="glass-input w-full p-3 rounded-xl text-sm" required>
+                    <input type="password" id="confirmPassword" placeholder="Confirm new password" class="glass-input w-full p-3 rounded-xl text-sm" required>
+                </div>
+                <button type="submit" class="btn-glow w-full bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 font-bold py-2.5 rounded-xl text-sm">Update Password</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -354,6 +371,16 @@
             <button onclick="submitRating()" class="flex-1 bg-teal-600 hover:bg-teal-500 text-white py-2.5 rounded-xl text-xs font-bold">Submit Review</button>
             <button onclick="closeModal('ratingModal')" class="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-xl text-xs font-bold">Cancel</button>
         </div>
+    </div>
+</div>
+
+<div id="insightsModal" class="modal bg-slate-950/40 hidden fixed inset-0 z-[1000] items-center justify-center p-4">
+    <div class="glass-card w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] bg-white">
+        <div class="bg-indigo-50 border-b border-slate-200 p-4 flex justify-between items-center">
+            <h3 class="font-bold text-md text-indigo-700">📊 Community Insights</h3>
+            <button onclick="closeModal('insightsModal')" class="text-2xl hover:bg-slate-100 w-8 h-8 rounded-full">×</button>
+        </div>
+        <div id="insightsBody" class="overflow-y-auto p-6 space-y-6 bg-slate-50"></div>
     </div>
 </div>
 
