@@ -91,11 +91,16 @@ function wireStaticHandlers() {
     document.getElementById('helpForm').addEventListener('submit', onSubmitRequest);
     document.getElementById('profileForm').addEventListener('submit', onUpdateProfile);
     document.getElementById('messageForm').addEventListener('submit', onSendMessage);
+    document.getElementById('passwordForm').addEventListener('submit', onChangePassword);
 
     document.getElementById('postImage').addEventListener('change', onPostImageChange);
     document.getElementById('profileImageInput').addEventListener('change', onProfileImageChange);
 
-    document.getElementById('searchBox').addEventListener('input', debounce(e => { state.filters.search = e.target.value; loadRequests(); }, 350));
+    document.getElementById('searchBox').addEventListener('input', debounce(e => {
+        state.filters.search = e.target.value;
+        loadRequests();
+        runGlobalSearch(e.target.value);
+    }, 350));
     document.getElementById('filterCategory').addEventListener('change', e => { state.filters.category = e.target.value; loadRequests(); });
     document.getElementById('filterPriority').addEventListener('change', e => { state.filters.priority = e.target.value; loadRequests(); });
     document.getElementById('hideResolved').addEventListener('change', e => { state.filters.hideResolved = e.target.checked; loadRequests(); });
@@ -892,4 +897,133 @@ async function adminDeleteUser(userId) {
     if (!confirm('⚠️ CRITICAL SECURITY WARNING: Wipe this user profile?')) return;
     try { await apiJson('api/admin.php', 'POST', { action: 'delete_user', user_id: userId }); loadAdminPanel(); }
     catch (err) { alert(err.message); }
+}
+
+// ---------------------------------------------------------------------
+// Global search (people + requests), shown as a strip under the filters
+// ---------------------------------------------------------------------
+async function runGlobalSearch(term) {
+    const box = document.getElementById('searchMatches');
+    const q = term.trim();
+    if (q.length < 2) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+
+    try {
+        const { users, requests } = await apiGet('api/search.php?q=' + encodeURIComponent(q));
+        if (!users.length && !requests.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+
+        let html = '<h4 class="text-xs font-bold text-slate-500 uppercase mb-3">🔎 Matching People & Posts</h4><div class="flex flex-wrap gap-2">';
+        users.forEach(u => {
+            html += `<button onclick="viewPublicProfile(${u.id})" class="btn-glow bg-teal-500/10 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-300 px-3 py-1.5 rounded-xl text-xs font-bold">👤 ${escapeHtml(u.name)} — ${escapeHtml(u.location || '')}</button>`;
+        });
+        requests.forEach(r => {
+            html += `<span class="bg-slate-100 border border-slate-200 text-slate-600 px-3 py-1.5 rounded-xl text-xs font-semibold">📍 ${escapeHtml(r.location)} (${r.category}) — ${escapeHtml(r.user_name)}</span>`;
+        });
+        html += '</div>';
+        box.innerHTML = html;
+        box.classList.remove('hidden');
+    } catch (e) { box.classList.add('hidden'); }
+}
+
+// ---------------------------------------------------------------------
+// Insights: platform statistics + leaderboard (aggregate SQL endpoints)
+// ---------------------------------------------------------------------
+async function openInsights() {
+    const body = document.getElementById('insightsBody');
+    body.innerHTML = '<p class="text-xs text-slate-500">Loading…</p>';
+    openModal('insightsModal');
+
+    try {
+        const [stats, board] = await Promise.all([
+            apiGet('api/stats.php'),
+            apiGet('api/leaderboard.php'),
+        ]);
+
+        const statCard = (label, value) => `
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 text-center">
+                <div class="text-2xl font-extrabold text-teal-700">${value}</div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase mt-1">${label}</div>
+            </div>`;
+
+        const categoryRows = stats.by_category.map(c => `
+            <div class="flex justify-between text-xs py-1.5 border-b border-slate-100">
+                <span class="font-semibold text-slate-600 capitalize">${c.category}</span>
+                <span class="font-bold text-teal-700">${c.count}</span>
+            </div>`).join('');
+
+        const priorityRows = stats.by_priority.map(p => `
+            <div class="flex justify-between text-xs py-1.5 border-b border-slate-100">
+                <span class="font-semibold text-slate-600">${priorityLabels[p.priority] || p.priority}</span>
+                <span class="font-bold text-teal-700">${p.count}</span>
+            </div>`).join('');
+
+        const topRatedRows = board.top_rated.length ? board.top_rated.map(u => `
+            <div class="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-slate-100">
+                ${generateAvatarHTML(u.profile_image, u.name, 'w-8 h-8 text-xs')}
+                <div class="flex-1 text-xs">
+                    <p class="font-bold text-slate-700 cursor-pointer hover:underline" onclick="viewPublicProfile(${u.id})">${escapeHtml(u.name)}</p>
+                    <p class="text-slate-400 text-[10px]">${escapeHtml(u.location || '')}</p>
+                </div>
+                <span class="text-amber-600 font-bold text-xs">⭐ ${u.avg_score} (${u.review_count})</span>
+            </div>`).join('') : '<p class="text-xs text-slate-400 italic">No ratings yet.</p>';
+
+        const mostActiveRows = board.most_active.length ? board.most_active.map(u => `
+            <div class="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-slate-100">
+                ${generateAvatarHTML(u.profile_image, u.name, 'w-8 h-8 text-xs')}
+                <div class="flex-1 text-xs">
+                    <p class="font-bold text-slate-700 cursor-pointer hover:underline" onclick="viewPublicProfile(${u.id})">${escapeHtml(u.name)}</p>
+                    <p class="text-slate-400 text-[10px]">${escapeHtml(u.location || '')}</p>
+                </div>
+                <span class="text-emerald-600 font-bold text-xs">✅ ${u.resolved_count} resolved</span>
+            </div>`).join('') : '<p class="text-xs text-slate-400 italic">No resolved requests yet.</p>';
+
+        body.innerHTML = `
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                ${statCard('Total Requests', stats.total_requests)}
+                ${statCard('Resolved', stats.resolved_count)}
+                ${statCard('Open', stats.open_count)}
+                ${statCard('Avg Fulfillment', stats.avg_fulfillment_percent + '%')}
+                ${statCard('Total Users', stats.total_users)}
+                ${statCard('Volunteers', stats.total_volunteers)}
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-slate-100 p-4 rounded-2xl">
+                    <h4 class="text-xs font-bold text-slate-600 uppercase mb-2">By Category</h4>
+                    ${categoryRows}
+                </div>
+                <div class="bg-slate-100 p-4 rounded-2xl">
+                    <h4 class="text-xs font-bold text-slate-600 uppercase mb-2">By Priority</h4>
+                    ${priorityRows}
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <h4 class="text-xs font-bold text-amber-600 uppercase mb-2">🏆 Top Rated Helpers</h4>
+                    <div class="space-y-2">${topRatedRows}</div>
+                </div>
+                <div>
+                    <h4 class="text-xs font-bold text-emerald-600 uppercase mb-2">💪 Most Active Helpers</h4>
+                    <div class="space-y-2">${mostActiveRows}</div>
+                </div>
+            </div>`;
+    } catch (e) {
+        body.innerHTML = `<p class="text-xs text-rose-600">Could not load insights: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+// ---------------------------------------------------------------------
+// Change password
+// ---------------------------------------------------------------------
+async function onChangePassword(e) {
+    e.preventDefault();
+    const current_password = document.getElementById('currentPassword').value;
+    const new_password = document.getElementById('newPassword').value;
+    const confirm_password = document.getElementById('confirmPassword').value;
+
+    try {
+        await apiJson('api/change_password.php', 'POST', { current_password, new_password, confirm_password });
+        alert('Password updated successfully!');
+        document.getElementById('passwordForm').reset();
+    } catch (err) { alert(err.message); }
 }
