@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/response.php';
+require_once __DIR__ . '/../includes/activity.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     jsonError('Method not allowed', 405);
@@ -44,5 +45,8 @@ $hash = password_hash($password, PASSWORD_BCRYPT);
 
 $stmt = $pdo->prepare('INSERT INTO users (name, email, password, phone, location, blood_group, is_volunteer) VALUES (?,?,?,?,?,?,?)');
 $stmt->execute([$name, $email, $hash, $phone, $location, $blood, $isVolunteer]);
+
+$newUserId = (int)$pdo->lastInsertId();
+logActivity($newUserId, 'register', 'Joined the Community Help Board 🎉');
 
 jsonResponse(['success' => true, 'message' => 'Registration successful. Please sign in.']);
